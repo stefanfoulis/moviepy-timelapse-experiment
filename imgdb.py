@@ -7,6 +7,7 @@ import os
 import click
 from resizeimage import resizeimage
 from PIL import Image
+import dateparser
 
 
 SOURCE_PATH = '/data/_input/prefixed-photos'
@@ -14,9 +15,36 @@ THUMBS_PATH = '/data/_input/prefixed-photos-thumbs'
 # THUMBS_PATH = '/work/thumbs'
 
 
-@click.group()
-def cli():
-    pass
+def datetime_from_filename(filename):
+    datestr = filename[0:10]
+    timestr = filename[11:19].replace('-', ':')
+    return dateparser.parse('{} {}'.format(datestr, timestr))
+
+
+class Img(object):
+    def __init__(self, path):
+        self.path = path
+        self.filename = os.path.basename(path)
+        self.date_taken = datetime_from_filename(self.filename)
+
+
+class ImgDB(object):
+    def __init__(self, dbpath='db.json'):
+        self.dbpath = dbpath
+        with open(dbpath, 'r') as dbfile:
+            self.db = json.load(dbfile)
+
+    def all(self):
+        for day in self.db.values():
+            for hour in day.values():
+                for img in hour:
+                    yield Img(img)
+
+    def filter(self, start_at, end_at):
+        # TODO: make more effecient
+        for img in self.all():
+            if img.date_taken and img.date_taken >= start_at and img.date_taken <= end_at:
+                yield img
 
 
 @click.command()
@@ -86,6 +114,9 @@ def generate_thumbnails(name, width, date, hour, overwrite):
             _resize(img, outpath, width=width)
 
 
+@click.group()
+def cli():
+    pass
 
 
 cli.add_command(generate_db)

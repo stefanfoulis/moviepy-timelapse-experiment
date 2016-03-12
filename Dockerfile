@@ -4,3 +4,4 @@ FROM dkarchmervue/moviepy:latest
 RUN pip install Pillow python-resize-image
 RUN pip install pyaml
 RUN pip install click
+RUN pip install dateparser
