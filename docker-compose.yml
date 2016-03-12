@@ -1,0 +1,8 @@
+moviepy:
+    # image: dkarchmervue/moviepy:latest
+    build: "."
+    volumes:
+#        - "../_input:/data/_input:ro"
+        - "../_input:/data/_input:rw"
+        - "../_output:/data/_output:rw"
+        - ".:/work:rw"
