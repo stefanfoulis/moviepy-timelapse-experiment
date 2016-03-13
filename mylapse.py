@@ -10,29 +10,30 @@ import imgdb
 source_path = '/data/_input/prefixed-photos-thumbs/320x'
 
 
-def _create_video(images, )
-
-
 @click.command()
 @click.option('--start-at')
 @click.option('--end-at')
 @click.option('--fps', default=15)
 @click.option('--outfile')
 @click.option('--dryrun', default=False)
-@click.option('--width', default=None)
-def create_timelapse(start_at, end_at, fps, outfile, dryrun):
+@click.option('--size', default=None)
+def create_timelapse(start_at, end_at, fps, outfile, dryrun, size):
     db = imgdb.ImgDB()
     img_paths = []
     start_at = dateparser.parse(start_at)
     end_at = dateparser.parse(end_at)
     click.echo('creating timelapse for timespan of {} until {} ({})'.format(start_at, end_at, end_at - start_at))
     for img in db.filter(start_at=start_at, end_at=end_at):
-        img_paths.append(img.path)
+        if size:
+            img_paths.append(img[size])
+        else:
+            img_paths.append(img.path)
     frame_count = len(img_paths)
-    click.echo('  {} frames, {} fps, {}s'.format(
+    click.echo('  {} frames, {} fps, {}s, {}'.format(
         frame_count,
         fps,
         frame_count/fps,
+        size or 'original size',
     ))
     if dryrun:
         click.echo('dryrun. exiting.')
@@ -41,6 +42,10 @@ def create_timelapse(start_at, end_at, fps, outfile, dryrun):
     video = ImageSequenceClip(img_paths, fps=fps)
     # video = CompositeVideoClip([clip])
     click.echo('  writing video...')
+    try:
+        os.makedirs(os.path.dirname(outfile))
+    except OSError:
+        pass
     video.write_videofile(outfile, audio=False)
 
 

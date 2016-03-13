@@ -21,11 +21,36 @@ def datetime_from_filename(filename):
     return dateparser.parse('{} {}'.format(datestr, timestr))
 
 
-class Img(object):
+class Img(dict):
     def __init__(self, path):
+        super(Img, self).__init__()
         self.path = path
         self.filename = os.path.basename(path)
         self.date_taken = datetime_from_filename(self.filename)
+
+    def __missing__(self, key):
+        if 'x' not in key:
+            raise KeyError
+        try:
+            width, height = key.split('x')
+            width, height = int(width), int(height)
+        except:
+            raise KeyError
+        basedir = SOURCE_PATH
+        relpath = self.path.replace(basedir + '/', '')
+        # click.echo(relpath)
+        outpath = os.path.join(THUMBS_PATH, key, relpath)
+        outdir = os.path.dirname(outpath)
+        try:
+            os.makedirs(outdir)
+        except OSError:
+            pass
+        exists = os.path.exists(outpath)
+        if not exists:
+            click.echo('generating {}'.format(outpath))
+            _resize(self.path, outpath, width=width, height=height)
+        self[key] = outpath
+        return outpath
 
 
 class ImgDB(object):
@@ -73,32 +98,36 @@ def generate_db(source_path=SOURCE_PATH):
         yaml.dump(images, dbfile, indent=4, default_flow_style=False)
 
 
-def _resize(inpath, outpath, width):
+def _resize(inpath, outpath, width=None, height=None):
     with open(inpath, 'r+b') as infile:
         with Image.open(infile) as inimage:
-            thumb = resizeimage.resize_width(inimage, width, validate=True)
+            if width and height:
+                thumb = resizeimage.resize_cover(inimage, [width, height])
+            elif width:
+                thumb = resizeimage.resize_width(inimage, width, validate=True)
+            elif height:
+                thumb = resizeimage.resize_height(inimage, height, validate=True)
+            else:
+                raise RuntimeError('at least width or height must be provided')
             thumb.save(outpath, inimage.format)
 
 
 @click.command()
 @click.option('--name', default=None, help='identifier for the thumbnail type')
+@click.option('--start-at')
+@click.option('--end-at')
 @click.option('--width', default=640, help='desired width for the thumbnail')
 @click.option('--date', help='date for which thumbnails should be generated')
 @click.option('--hour', default=None, help='hour (of date) for which thumbnails should be generated')
 @click.option('--overwrite', default=False, help='whether to overwrite existing thumbnails')
-def generate_thumbnails(name, width, date, hour, overwrite):
-    with open('db.json', 'r') as dbfile:
-        db = json.load(dbfile)
-    if hour:
-        images = db[date][hour]
-    else:
-        images = []
-        for lst in db[date].values():
-            images.extend(lst)
+def generate_thumbnails(name, width, start_at, end_at, overwrite):
+    db = ImgDB()
+    start_at = dateparser.parse(start_at)
+    end_at = dateparser.parse(end_at)
     basedir = SOURCE_PATH
     name = name or '{}x'.format(width)
-    for img in images:
-        relpath = img.replace(basedir + '/', '')
+    for img in db.filter(start_at=start_at, end_at=end_at):
+        relpath = img.path.replace(basedir + '/', '')
         # click.echo(relpath)
         outpath = os.path.join(THUMBS_PATH, name, relpath)
         outdir = os.path.dirname(outpath)
