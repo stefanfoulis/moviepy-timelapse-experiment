@@ -1,8 +1,6 @@
 from moviepy.editor import *
-from collections import OrderedDict
 import os
 import click
-import json
 import dateparser
 import imgdb
 
@@ -24,6 +22,7 @@ def create_timelapse(start_at, end_at, fps, outfile, dryrun, size):
     end_at = dateparser.parse(end_at)
     click.echo('creating timelapse for timespan of {} until {} ({})'.format(start_at, end_at, end_at - start_at))
     for img in db.filter(start_at=start_at, end_at=end_at):
+        print('   img: {}'.format(img))
         if size:
             img_paths.append(img[size])
         else:

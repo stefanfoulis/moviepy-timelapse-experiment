@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
-from collections import OrderedDict
 import json
-import yaml
-from pprint import pprint
 import os
 import click
 from resizeimage import resizeimage
@@ -12,20 +9,37 @@ import dateparser
 
 SOURCE_PATH = '/data/_input/prefixed-photos'
 THUMBS_PATH = '/data/_input/prefixed-photos-thumbs'
-# THUMBS_PATH = '/work/thumbs'
+DB_BASEDIR = '/data/_input/db/'
+
+
+def makedirs(path):
+    try:
+        os.makedirs(path)
+    except OSError:
+        pass
 
 
 def datetime_from_filename(filename):
-    datestr = filename[0:10]
-    timestr = filename[11:19].replace('-', ':')
-    return dateparser.parse('{} {}'.format(datestr, timestr))
+    if all(filename[idx] == '-' for idx in (4, 7)):
+        datestr = filename[0:10]
+    else:
+        return None
+    if all(filename[idx] in ('-', ':') for idx in (13, 16)):
+        timestr = filename[11:19].replace('-', ':')
+    else:
+        timestr = ''
+    datetimestr = '{} {}'.format(datestr, timestr)
+    return dateparser.parse(datetimestr)
 
 
 class Img(dict):
-    def __init__(self, path):
+    def __init__(self, base_path, rel_img_path, thumbs_base):
         super(Img, self).__init__()
-        self.path = path
-        self.filename = os.path.basename(path)
+        self.base_path = base_path
+        self.rel_img_path = rel_img_path
+        self.thumbs_base = thumbs_base
+        self.path = os.path.join(base_path, rel_img_path)
+        self.filename = os.path.basename(self.path)
         self.date_taken = datetime_from_filename(self.filename)
 
     def __missing__(self, key):
@@ -36,15 +50,10 @@ class Img(dict):
             width, height = int(width), int(height)
         except:
             raise KeyError
-        basedir = SOURCE_PATH
-        relpath = self.path.replace(basedir + '/', '')
         # click.echo(relpath)
-        outpath = os.path.join(THUMBS_PATH, key, relpath)
+        outpath = os.path.join(self.thumbs_base, key, self.rel_img_path)
         outdir = os.path.dirname(outpath)
-        try:
-            os.makedirs(outdir)
-        except OSError:
-            pass
+        makedirs(outdir)
         exists = os.path.exists(outpath)
         if not exists:
             click.echo('generating {}'.format(outpath))
@@ -53,49 +62,81 @@ class Img(dict):
         return outpath
 
 
-class ImgDB(object):
-    def __init__(self, dbpath='db.json'):
+class Day(object):
+    def __init__(self, dbpath):
         self.dbpath = dbpath
-        with open(dbpath, 'r') as dbfile:
-            self.db = json.load(dbfile)
+        self._db = None
+        self.date = datetime_from_filename(os.path.basename(self.dbpath)).date()
+
+    @property
+    def db(self):
+        if self._db is None:
+            with open(self.dbpath, 'r') as dbfile:
+                self._db = json.load(dbfile)
+        return self._db
+
+
+class ImgDB(object):
+    def __init__(self, dbpath=DB_BASEDIR, img_path=SOURCE_PATH, thumbs_path=THUMBS_PATH):
+        self.dbpath = os.path.abspath(dbpath)
+        makedirs(self.dbpath)
+        self.img_path = img_path
+        self.thumbs_path = thumbs_path
+        self._days = None
+
+    def import_images(self, source_path=None):
+        source_path = source_path or self.img_path
+        for (day_dirpath, day_dirnames, day_filenames) in os.walk(source_path):
+            for day_dirname in day_dirnames:
+                if not all(day_dirname[idx] == '-' for idx in (4, 7)):
+                    continue
+                daydata = {
+                    'date': day_dirname,
+                    'basedir': source_path,
+                    'images': []
+                }
+                for (img_dirpath, img_dirnames, img_filenames) in os.walk(os.path.join(day_dirpath, day_dirname)):
+                    for filename in img_filenames:
+                        if not filename.lower().endswith('.jpg'):
+                            continue
+                        abspath = os.path.join(img_dirpath, filename)
+                        relpath = abspath.replace(self.img_path + '/', '')
+                        daydata['images'].append(relpath)
+                daydata['images'] = sorted(daydata['images'])
+                with open(os.path.join(self.dbpath, '{}.json'.format(day_dirname)), 'w') as dbfile:
+                    json.dump(
+                        daydata,
+                        dbfile,
+                        sort_keys=True,
+                        indent=4,
+                    )
+            break
+
+    def days(self):
+        for (dirpath, dirnames, filenames) in os.walk(self.dbpath):
+            for filename in filenames:
+                if filename.endswith('.json'):
+                    day_db_path = os.path.join(dirpath, filename)
+                    yield Day(dbpath=day_db_path)
 
     def all(self):
-        for day in self.db.values():
-            for hour in day.values():
-                for img in hour:
-                    yield Img(img)
+        for img in self.filter(start_at=None, end_at=None):
+            yield img
 
     def filter(self, start_at, end_at):
-        # TODO: make more effecient
-        for img in self.all():
-            if img.date_taken and img.date_taken >= start_at and img.date_taken <= end_at:
-                yield img
+        for day in self.days():
+            if (start_at is None or start_at.date() <= day.date) and (end_at is None or end_at.date() >= day.date):
+                for img_relpath in day.db['images']:
+                    img = Img(self.img_path, img_relpath, self.thumbs_path)
+                    if img.date_taken and img.date_taken >= start_at and img.date_taken <= end_at:
+                        yield img
 
 
 @click.command()
-def generate_db(source_path=SOURCE_PATH):
+def generate_db():
     click.echo('Generating the image database')
-    images = OrderedDict()
-    for (dirpath, dirnames, filenames) in os.walk(source_path):
-        for filename in filenames:
-            datestr = filename[0:10]
-            timestr = filename[11:19].replace('-', ':')
-            hour = timestr[0:2]
-            print(datestr, timestr, hour)
-            images.setdefault(datestr, OrderedDict())
-            images[datestr].setdefault(hour, [])
-            images[datestr][hour].append(os.path.join(dirpath, filename))
-            # create date keys
-            # images.setdefault(dirname, OrderedDict())
-        # jpgs = [os.path.join(dirpath, filename) for filename in filenames if os.path.splitext(filename)[1].lower()=='.jpg' and filename.startswith('2016-01-14')]
-        # filenames_filtered.extend(list(set(jpgs)))
-        # break
-
-    with open('db.json', 'w') as dbfile:
-        json.dump(images, dbfile, sort_keys=True, indent=4)
-
-    with open('db.yaml', 'w') as dbfile:
-        yaml.dump(images, dbfile, indent=4, default_flow_style=False)
+    db = ImgDB()
+    db.import_images()
 
 
 def _resize(inpath, outpath, width=None, height=None):
@@ -131,10 +172,7 @@ def generate_thumbnails(name, width, start_at, end_at, overwrite):
         # click.echo(relpath)
         outpath = os.path.join(THUMBS_PATH, name, relpath)
         outdir = os.path.dirname(outpath)
-        try:
-            os.makedirs(outdir)
-        except OSError:
-            pass
+        os.makedirs(outdir)
         exists = os.path.exists(outpath)
         if exists and not overwrite:
             click.echo('skipping {}'.format(outpath))
