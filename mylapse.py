@@ -3,30 +3,43 @@ import os
 import click
 import dateparser
 import imgdb
+import datetime
 
 
 source_path = '/data/_input/prefixed-photos-thumbs/320x'
 
 
+def img_iterator(db, timeblocks, size):
+    for start_at, end_at in timeblocks:
+        for img in db.filter(start_at=start_at, end_at=end_at):
+            if size:
+                yield img[size]
+            else:
+                yield img.path
+
+
 @click.command()
-@click.option('--start-at')
-@click.option('--end-at')
+@click.option('--timespan')
 @click.option('--fps', default=15)
 @click.option('--outfile')
 @click.option('--dryrun', default=False)
 @click.option('--size', default=None)
-def create_timelapse(start_at, end_at, fps, outfile, dryrun, size):
+def create_timelapse(timespan, fps, outfile, dryrun, size):
     db = imgdb.ImgDB()
-    img_paths = []
-    start_at = dateparser.parse(start_at)
-    end_at = dateparser.parse(end_at)
-    click.echo('creating timelapse for timespan of {} until {} ({})'.format(start_at, end_at, end_at - start_at))
-    for img in db.filter(start_at=start_at, end_at=end_at):
-        print('   img: {}'.format(img))
-        if size:
-            img_paths.append(img[size])
-        else:
-            img_paths.append(img.path)
+    timeblocks = []
+    duration = datetime.timedelta()
+    for timeblock in timespan.split(','):
+        timeblock = timeblock.strip()
+        if not timeblock:
+            continue
+        start_at, end_at = timeblock.split('->')
+        start_at = dateparser.parse(start_at)
+        end_at = dateparser.parse(end_at)
+        timeblocks.append((start_at, end_at))
+        duration += end_at - start_at
+
+    click.echo('creating timelapse for timespan of {} ({})'.format(timeblocks, duration))
+    img_paths = list(img_iterator(db=db, timeblocks=timeblocks, size=size))
     frame_count = len(img_paths)
     click.echo('  {} frames, {} fps, {}s, {}'.format(
         frame_count,
