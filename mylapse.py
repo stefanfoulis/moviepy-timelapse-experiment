@@ -18,13 +18,32 @@ def img_iterator(db, timeblocks, size):
                 yield img.path
 
 
+class TimestampedImageSequenceClip(CompositeVideoClip):
+    def __init__(self, *args, **kwargs):
+        self.clips = []
+        self.add_timestamp = kwargs.pop('timestamp', False)
+        self.timelapse = ImageSequenceClip(*args, **kwargs)
+        self.clips.append(self.timelapse)
+        if self.add_timestamp:
+            txt_clip = TextClip("MoviePy ROCKS", fontsize=50, color='white')
+            self.txt_clip = txt_clip.set_pos('center').set_duration(5)
+            self.clips.append(self.txt_clip)
+        super(TimestampedImageSequenceClip, self).__init__(self.clips)
+
+
+timespan_helptext = (
+    'time ranges like this "2016-03-01 11:00->2016-03-01 18:00" '
+    'or this "2016-01-01->2016-03-18@6;12;18". Multiples comma seperated.'
+)
+
 @click.command()
-@click.option('--timespan')
+@click.option('--timespan', help=timespan_helptext')
 @click.option('--fps', default=15)
 @click.option('--outfile')
 @click.option('--dryrun', default=False)
 @click.option('--size', default=None)
-def create_timelapse(timespan, fps, outfile, dryrun, size):
+@click.option('--timestamp', default=False)
+def create_timelapse(timespan, fps, outfile, dryrun, size, timestamp):
     db = imgdb.ImgDB()
     timeblocks = []
     duration = datetime.timedelta()
@@ -33,12 +52,29 @@ def create_timelapse(timespan, fps, outfile, dryrun, size):
         if not timeblock:
             continue
         start_at, end_at = timeblock.split('->')
+        assert '@' not in start_at
         start_at = dateparser.parse(start_at)
+        if '@' in end_at:
+            end_at, times = end_at.split('@')
+        else:
+            times = None
         end_at = dateparser.parse(end_at)
-        timeblocks.append((start_at, end_at))
-        duration += end_at - start_at
+        if times:
+            current_datetime = start_at
+            while current_datetime <= end_at:
+                for hour in times.split(';'):
+                    micro_start_at = current_datetime + datetime.timedelta(hours=int(hour)-1, seconds=59*60)
+                    micro_end_at = current_datetime + datetime.timedelta(hours=int(hour), seconds=1*60)
+                    timeblocks.append((micro_start_at, micro_end_at))
+                    duration += micro_end_at - micro_start_at
+                current_datetime = current_datetime + datetime.timedelta(hours=24)
+        else:
+            timeblocks.append((start_at, end_at))
+            duration += end_at - start_at
 
-    click.echo('creating timelapse for timespan of {} ({})'.format(timeblocks, duration))
+    click.echo('creating timelapse for following timespans'.format(timeblocks, duration))
+    for start_at, end_at in timeblocks:
+        click.echo('    {} -> {}'.format(str(start_at), str(end_at)))
     img_paths = list(img_iterator(db=db, timeblocks=timeblocks, size=size))
     frame_count = len(img_paths)
     click.echo('  {} frames, {} fps, {}s, {}'.format(
@@ -51,7 +87,8 @@ def create_timelapse(timespan, fps, outfile, dryrun, size):
         click.echo('dryrun. exiting.')
         return
     click.echo('  image sequence clip...')
-    video = ImageSequenceClip(img_paths, fps=fps)
+    # video = ImageSequenceClip(img_paths, fps=fps)
+    video = TimestampedImageSequenceClip(img_paths, fps=fps, timestamp=timestamp)
     # video = CompositeVideoClip([clip])
     click.echo('  writing video...')
     try:
